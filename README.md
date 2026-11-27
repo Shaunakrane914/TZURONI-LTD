@@ -25,7 +25,7 @@ For a live run, copy `.env.example` to `.env`. Set `APIFY_TOKEN` from [Apify Int
 
 Resume an interrupted run with `python -m tzuroni live --resume --apify-budget 0.75`. It keeps the original time window, reuses completed stages and reconnects to known Apify runs. If Apify could not confirm startup, check the Apify Runs page before starting a fresh collection under a different `--out` directory. A hard process kill can leave `.live.lock` in the output directory. Remove that lock only after checking that the original process has stopped.
 
-The report includes per-exchange mention and sentiment rankings, social-source coverage for the full window and at forecast time, the latest available close, rolling 20-bar support and resistance, and the forecast. `metrics.csv` shows per-exchange and pooled error, including MAE improvement versus a flat-price baseline. `backtest.csv` records the actual and predicted prices and returns, fold boundaries, and the latest training-label timestamp. The local snapshot contains normalized inputs and Apify run, actor, and build IDs. Keep `.env`, raw live snapshots, and collection checkpoints local.
+The report includes per-exchange mention and sentiment rankings, social-source coverage for the full window and at forecast time, the latest available close, rolling 20-bar support and resistance, and the forecast. `metrics.csv` shows per-exchange and pooled error, including MAE improvement versus a flat-price baseline. `backtest.csv` records actual and predicted prices and returns, fold boundaries, and the latest training-label timestamp. `news.csv` lists matched Exa articles, their source URLs, publication timestamps, excerpts, and headline scores for review. The local snapshot contains normalized inputs and Apify run, actor, and build IDs. Keep `.env`, raw live snapshots, and collection checkpoints local.
 
 ## Sources
 
@@ -35,6 +35,8 @@ The report includes per-exchange mention and sentiment rankings, social-source c
 | KRX | [Naver Stock Discussion](https://apify.com/hgservices/naver-stock-discussion-scraper), actor ID `xXFbG2oX6UpaPtcTC` | [FastStockNews](https://t.me/s/FastStockNews) |
 
 Both Telegram collections use the [Telegram Channel Scraper](https://apify.com/nexuscortex/telegram-channel-scraper), actor ID `WS2JAAECSV1ajF5rR`. News comes from [Exa Search](https://exa.ai/docs/reference/search) and 30-minute bars come from [yfinance](https://ranaroussi.github.io/yfinance/reference/yfinance.price_history.html). Search terms cover ticker symbols, cashtags, company names, and local names where applicable. The LIHKG collection fetches the original text for up to eight matching threads per ticker across different days and uses the title when a body is unavailable. Posts are deduplicated by source and ID. Missing engagement fields stay empty.
+
+The Exa Python SDK reads `EXA_API_KEY` from the environment after the live command loads `.env`. Each ticker search uses a company-specific query, a financial-news objective, article highlights, and the collection's 10-day publication window. Article highlights are for review because a page may have been updated after its published timestamp. The model uses the headline for its publication-time news feature.
 
 ## Method and limits
 

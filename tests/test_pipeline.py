@@ -2,7 +2,8 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -11,6 +12,7 @@ from tzuroni.assets import ASSETS
 from tzuroni.checkpoint import LiveCheckpoint, open_live_checkpoint
 from tzuroni.demo import make_demo
 from tzuroni.model import build_panel, evaluate, summarize
+from tzuroni.news import search_news
 from tzuroni.providers import POST_COLUMNS, collect_live_posts, run_actor
 
 
@@ -67,7 +69,8 @@ class ProviderMappingTests(unittest.TestCase):
             [{'type': 'post', 'channel': 'FastStockNews', 'id': 1, 'date': when,
               'text': '삼성전자 상승', 'isEdited': True}],
         ]
-        article = {'title': 'Tencent upgraded', 'publishedDate': when, 'url': 'https://example.com/news'}
+        article = {'title': 'Tencent upgraded', 'publishedDate': when, 'url': 'https://example.com/news',
+                   'highlights': ['This passage was updated after publication.']}
 
         def actor_result(_, source, payload, token, budget, checkpoint, stage):
             return actor_rows.pop(0), {'run_id': stage, 'actor_id': source, 'build_id': None}
@@ -75,7 +78,7 @@ class ProviderMappingTests(unittest.TestCase):
         with TemporaryDirectory() as directory, \
              patch.dict('os.environ', {'APIFY_TOKEN': 'test', 'EXA_API_KEY': 'test'}), \
              patch('tzuroni.providers.run_actor', side_effect=actor_result), \
-             patch('tzuroni.providers.request_json', return_value={'results': [article]}):
+             patch('tzuroni.providers.search_news', return_value=[article]):
             checkpoint = LiveCheckpoint(Path(directory) / 'state.json', pd.Timestamp('2026-11-27T00:00Z'))
             posts, runs = collect_live_posts(checkpoint.start, checkpoint.end, 0.25, checkpoint)
 
@@ -88,6 +91,29 @@ class ProviderMappingTests(unittest.TestCase):
         self.assertEqual(lihkg['likes'], 3)
         self.assertIn('outperform', lihkg['text'])
         self.assertNotIn('bearish', lihkg['text'])
+        exa = posts.loc[posts['source'].eq('exa')].iloc[0]
+        self.assertEqual(exa['text'], article['title'])
+        self.assertEqual(exa['article_highlights'], article['highlights'][0])
+
+    def test_exa_sdk_request_matches_pipeline_window(self):
+        end = pd.Timestamp('2026-11-27T10:45Z')
+        start = end - timedelta(days=10)
+        client = Mock()
+        client.search.return_value = SimpleNamespace(results=[SimpleNamespace(
+            id='article', url='https://example.com/news', title='Tencent upgraded',
+            published_date='2026-11-26T03:00:00Z', highlights=['An analyst raised guidance.'],
+        )])
+        result = search_news(client, ASSETS[0], start, end)[0]
+        query, = client.search.call_args.args
+        options = client.search.call_args.kwargs
+        self.assertIn('0700.HK', query)
+        self.assertIn('stock sentiment', options['objective'])
+        self.assertEqual(options['start_published_date'], start.isoformat())
+        self.assertEqual(options['end_published_date'], end.isoformat())
+        self.assertEqual(options['contents'], {'highlights': True})
+        self.assertEqual(set(options), {'objective', 'start_published_date', 'end_published_date', 'contents'})
+        self.assertEqual(result['publishedDate'], '2026-11-26T03:00:00Z')
+        self.assertEqual(result['highlights'], ['An analyst raised guidance.'])
 
 
 class CheckpointTests(unittest.TestCase):

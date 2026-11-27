@@ -26,6 +26,12 @@ def analyze(prices, posts, metadata, output):
     ranking = summarize(latest, scored)
     ranking.to_csv(output / 'rankings.csv', index=False)
     metrics.to_csv(output / 'metrics.csv', index=False)
+    news_columns = ['ticker', 'published_at', 'url', 'text', 'article_highlights', 'score']
+    news = scored.loc[scored['source'].eq('exa'), news_columns].copy()
+    # Keep publisher-supplied text literal when the CSV is opened in a spreadsheet.
+    for column in ('url', 'text', 'article_highlights'):
+        news[column] = news[column].astype('string').str.replace(r'^(\s*[=+@-])', r"'\1", regex=True)
+    news.sort_values(['ticker', 'published_at'], ascending=[True, False]).to_csv(output / 'news.csv', index=False)
     backtest_columns = ['fold', 'exchange', 'ticker', 'bar_end', 'target_at', 'trained_through',
                         'close', 'target_close', 'zero_return_close', 'price_only_close',
                         'price_and_text_close', 'target_return', 'zero_return', 'price_only', 'price_and_text']

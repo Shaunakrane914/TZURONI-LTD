@@ -10,6 +10,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
 from .assets import ASSETS
+from .news import create_news_client, search_news
 
 
 ACTORS = {
@@ -22,7 +23,7 @@ BAR = timedelta(minutes=30)
 PRICE_COLUMNS = ['ticker', 'bar_end', 'close', 'high', 'low', 'volume']
 POST_COLUMNS = [
     'ticker', 'source', 'post_id', 'published_at', 'url', 'text',
-    'likes', 'reposts', 'views', 'followers', 'reactions',
+    'likes', 'reposts', 'views', 'followers', 'reactions', 'article_highlights',
 ]
 
 
@@ -116,6 +117,7 @@ def first_value(row, *keys):
 
 
 def post_record(asset, source, row):
+    article_highlights = None
     if source == 'naver':
         if row.get('type') != 'post' or row.get('postType') == 'itemNewsPrice':
             return None
@@ -140,6 +142,7 @@ def post_record(asset, source, row):
         text = row.get('title') or ''
         if not asset.mentioned_in(text):
             return None
+        article_highlights = '\n'.join(row.get('highlights') or [])
         published = row.get('publishedDate')
         post_id = row.get('url') or row.get('id')
     else:
@@ -155,7 +158,7 @@ def post_record(asset, source, row):
         reposts=first_value(row, 'reposts', 'repostCount', 'shares'),
         views=first_value(row, 'views', 'viewCount'),
         followers=first_value(row, 'authorFollowers', 'followerCount', 'followers'),
-        reactions=row.get('reactionsTotal'),
+        reactions=row.get('reactionsTotal'), article_highlights=article_highlights,
     )
 
 
@@ -174,7 +177,7 @@ def select_lihkg_threads(rows, market, start, end):
 
 def collect_live_posts(start, end, budget, checkpoint):
     apify_token = os.environ['APIFY_TOKEN']
-    exa_key = os.environ['EXA_API_KEY']
+    news_client = create_news_client()
 
     hk = [asset for asset in ASSETS if asset.exchange == 'HKEX']
     kr = [asset for asset in ASSETS if asset.exchange == 'KRX']
@@ -232,14 +235,7 @@ def collect_live_posts(start, end, budget, checkpoint):
             stage = f'exa-{asset.ticker}'
             rows = checkpoint.get(stage)
             if rows is None:
-                rows = request_json(
-                    session, 'POST', 'https://api.exa.ai/search', stage,
-                    headers={'x-api-key': exa_key}, json={
-                        'query': f'{asset.name} {asset.ticker} {asset.aliases[0]} stock earnings company news',
-                        'category': 'news', 'numResults': 10,
-                        'startPublishedDate': start.isoformat(), 'endPublishedDate': end.isoformat(),
-                    },
-                )['results']
+                rows = search_news(news_client, asset, start, end)
                 checkpoint.put(stage, rows)
             for row in rows:
                 record = post_record(asset, 'exa', row)
