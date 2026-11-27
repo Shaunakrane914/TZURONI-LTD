@@ -162,18 +162,13 @@ def post_record(asset, source, row):
     )
 
 
-def lihkg_terms(asset):
-    return (*asset.search_terms, asset.code.lstrip('0'), f'{asset.aliases[0]}股價')
-
-
 def select_lihkg_threads(rows, market, start, end):
     candidates = []
     for asset in market:
-        terms = lihkg_terms(asset)
         matches = []
         for row in rows:
             exact = post_record(asset, 'lihkg', row)
-            if not exact and row.get('source_query') not in terms:
+            if not exact and row.get('source_query') not in asset.search_terms:
                 continue
             date = utc_timestamp(row.get('created_at'))
             if row.get('thread_id') and not pd.isna(date) and start <= date <= end:
@@ -193,7 +188,7 @@ def collect_live_posts(start, end, budget, checkpoint):
     kr = [asset for asset in ASSETS if asset.exchange == 'KRX']
     requests_by_source = [
         ('lihkg', hk, {
-            'mode': 'search', 'keywords': [term for asset in hk for term in lihkg_terms(asset)],
+            'mode': 'search', 'keywords': [term for asset in hk for term in asset.search_terms],
             'dateFrom': start.tz_convert('Asia/Hong_Kong').strftime('%m/%d/%y'),
             'order': 'desc_create_time', 'maxItems': 30,
         }),

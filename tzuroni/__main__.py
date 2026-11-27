@@ -23,6 +23,9 @@ def analyze(prices, posts, metadata, output):
     posts = posts.drop_duplicates(subset=['ticker', 'source', 'post_id'])
     panel, scored = build_panel(prices, posts, start, end)
     latest, backtest, metrics = evaluate(panel)
+    for source in ('forum', 'telegram', 'news'):
+        backtest[f'{source}_available'] = backtest[f'{source}_count'].gt(0)
+    backtest['both_social_available'] = backtest['forum_available'] & backtest['telegram_available']
     ranking = summarize(latest, scored)
     ranking.to_csv(output / 'rankings.csv', index=False)
     metrics.to_csv(output / 'metrics.csv', index=False)
@@ -34,10 +37,11 @@ def analyze(prices, posts, metadata, output):
     news.sort_values(['ticker', 'published_at'], ascending=[True, False]).to_csv(output / 'news.csv', index=False)
     backtest_columns = ['fold', 'exchange', 'ticker', 'bar_end', 'target_at', 'trained_through',
                         'close', 'target_close', 'zero_return_close', 'price_only_close',
-                        'price_and_text_close', 'target_return', 'zero_return', 'price_only', 'price_and_text']
+                        'price_and_text_close', 'target_return', 'zero_return', 'price_only', 'price_and_text',
+                        'forum_available', 'telegram_available', 'both_social_available', 'news_available']
     backtest[backtest_columns].to_csv(output / 'backtest.csv', index=False)
     (output / 'report.html').write_text(
-        render_report(ranking, metrics, start, end, metadata['mode']), encoding='utf-8',
+        render_report(ranking, metrics, backtest, start, end, metadata['mode']), encoding='utf-8',
     )
     print(f'{metadata["mode"]} report: {output.resolve() / "report.html"}')
 

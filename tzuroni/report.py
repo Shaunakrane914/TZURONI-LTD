@@ -3,7 +3,7 @@ from html import escape
 import pandas as pd
 
 
-def render_report(ranking, metrics, start, end, mode):
+def render_report(ranking, metrics, backtest, start, end, mode):
     decimals = dict.fromkeys(['current_price', 'support', 'resistance', 'next_bar_price', 'next_bar_return_pct'], 2)
     display = ranking.round({**decimals, 'sentiment_score': 3}).copy()
     display['bar_end_utc'] = display['bar_end_utc'].dt.strftime('%Y-%m-%d %H:%M')
@@ -48,6 +48,14 @@ def render_report(ranking, metrics, start, end, mode):
         'mae_improvement_vs_price_only_pct': 'MAE improvement vs price-only (%)',
         'directional_accuracy_pct': 'Directional accuracy (%)',
     }).to_html(index=False, border=0, na_rep='—')
+    coverage = backtest.groupby('exchange', sort=False).agg(**{
+        'Held-out rows': ('ticker', 'size'),
+        'Rows with forum posts': ('forum_available', 'sum'),
+        'Rows with Telegram posts': ('telegram_available', 'sum'),
+        'Rows with both social sources': ('both_social_available', 'sum'),
+        'Rows with news': ('news_available', 'sum'),
+    })
+    coverage_table = coverage.sort_index().rename_axis('Exchange').reset_index().to_html(index=False, border=0)
 
     note = ('Synthetic demonstration. Prices and scores are generated for verification.' if mode == 'demo'
             else 'Live-source snapshot. Source coverage and the share of scored posts vary by asset.')
@@ -74,4 +82,7 @@ th {{ background: #eaf1f7; }}
 {''.join(sections)}
 <section><h2>Walk-forward validation</h2>
 <p>Three chronological folds compare next-bar log returns from the price-only model, the model with text, and a flat-price forecast. Positive MAE improvement means lower error than the corresponding baseline.</p>
-<div class="scroll">{metrics_table}</div></section></main></body></html>'''
+<div class="scroll">{metrics_table}</div>
+<h3>Source coverage in the holdout</h3>
+<p>Each count is the number of held-out rows with a matched item from the source in the 24 hours before that bar closed.</p>
+<div class="scroll">{coverage_table}</div></section></main></body></html>'''
