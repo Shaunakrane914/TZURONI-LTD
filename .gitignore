@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+outputs/
+.live-checkpoint.json
+.live-checkpoint.tmp
+.live.lock
+snapshot/
