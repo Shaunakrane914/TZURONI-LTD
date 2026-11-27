@@ -20,10 +20,17 @@ NEGATIVE = ('bearish', 'downgrade', 'downgraded', 'underperform', 'missed estima
             'sell rating', 'weak demand', 'profit warning', 'plunge', '利淡', '利空', '下調',
             '下调', '沽售', '下跌', '大跌', '回落', '급락', '하락', '악재', '매도', '실적 악화')
 PRICE_FEATURES = ['last_return', 'momentum', 'volatility', 'bar_range', 'volume_change', 'is_krx']
-BENCHMARKS = ('zero_return', 'price_only', 'price_and_text')
-TEXT_FEATURES = [f'{group}_{metric}' for group in ('forum', 'telegram', 'news')
-                 for metric in ('score', 'count', 'scored_share')]
-FEATURES = PRICE_FEATURES + TEXT_FEATURES
+SOCIAL_FEATURES = [f'{group}_{metric}' for group in ('forum', 'telegram')
+                   for metric in ('score', 'count', 'scored_share')]
+NEWS_FEATURES = ['news_score', 'news_count', 'news_scored_share']
+FEATURES = PRICE_FEATURES + SOCIAL_FEATURES + NEWS_FEATURES
+MODEL_FEATURES = {
+    'price_only': PRICE_FEATURES,
+    'price_and_social': PRICE_FEATURES + SOCIAL_FEATURES,
+    'price_and_news': PRICE_FEATURES + NEWS_FEATURES,
+    'price_and_text': FEATURES,
+}
+BENCHMARKS = ('zero_return', *MODEL_FEATURES)
 LOOKBACK = timedelta(hours=24)
 
 
@@ -40,8 +47,16 @@ def score_text(text):
     return (positive - negative) / (positive + negative)
 
 
-def build_panel(prices, posts, start, end):
-    scored = posts.assign(score=posts['text'].map(score_text))
+def build_panel(prices, posts, start, end, sentiment_model='lexicon'):
+    if sentiment_model == 'semantic':
+        from .semantic import semantic_scores
+
+        unique_text = posts['text'].unique()
+        score_by_text = dict(zip(unique_text, semantic_scores(unique_text), strict=True))
+        scores = posts['text'].map(score_by_text)
+    else:
+        scores = posts['text'].map(score_text)
+    scored = posts.assign(score=scores)
     frames = []
     for asset in ASSETS:
         bars = prices.loc[prices['ticker'].eq(asset.ticker) & prices['bar_end'].le(end)].copy()
@@ -105,8 +120,8 @@ def evaluate(panel):
         test['fold'] = fold
         test['trained_through'] = train['target_at'].max()
         test['zero_return'] = 0.0
-        test['price_only'] = predict(train, test, PRICE_FEATURES)
-        test['price_and_text'] = predict(train, test, FEATURES)
+        for model, columns in MODEL_FEATURES.items():
+            test[model] = predict(train, test, columns)
         folds.append(test)
 
     scores = pd.concat(folds, ignore_index=True)

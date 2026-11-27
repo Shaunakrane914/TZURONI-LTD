@@ -16,6 +16,7 @@ from .news import create_news_client, search_news
 ACTORS = {
     'lihkg': 'claude_code_reviewer/lihkg-scraper-en',
     'naver': 'hgservices/naver-stock-discussion-scraper',
+    'naver_blog': 'webdata_labs/naver-blog-cafe-scraper',
     'telegram': 'nexuscortex/telegram-channel-scraper',
 }
 CHANNELS = {'HKEX': ['StockIntelligence'], 'KRX': ['FastStockNews']}
@@ -23,7 +24,7 @@ BAR = timedelta(minutes=30)
 PRICE_COLUMNS = ['ticker', 'bar_end', 'close', 'high', 'low', 'volume']
 POST_COLUMNS = [
     'ticker', 'source', 'post_id', 'published_at', 'url', 'text',
-    'likes', 'reposts', 'views', 'followers', 'reactions', 'article_highlights',
+    'likes', 'reposts', 'views', 'followers', 'reactions', 'article_highlights', 'source_detail',
 ]
 
 
@@ -34,15 +35,20 @@ class ProviderError(RuntimeError):
 
 
 def request_json(session, method, url, context, **kwargs):
-    try:
-        response = session.request(method, url, timeout=35, **kwargs)
-        response.raise_for_status()
-        return response.json()
-    except requests.HTTPError as error:
-        status = error.response.status_code
-        raise ProviderError(f'{context}: HTTP {status}', status) from None
-    except (requests.RequestException, ValueError) as error:
-        raise ProviderError(f'{context}: {type(error).__name__}') from None
+    attempts = 3 if method == 'GET' else 1
+    for attempt in range(attempts):
+        try:
+            response = session.request(method, url, timeout=35, **kwargs)
+            response.raise_for_status()
+            return response.json()
+        except requests.HTTPError as error:
+            status = error.response.status_code
+            raise ProviderError(f'{context}: HTTP {status}', status) from None
+        except requests.exceptions.ChunkedEncodingError as error:
+            if attempt == attempts - 1:
+                raise ProviderError(f'{context}: {type(error).__name__}') from None
+        except (requests.RequestException, ValueError) as error:
+            raise ProviderError(f'{context}: {type(error).__name__}') from None
 
 
 def run_actor(session, source, payload, token, budget, checkpoint, stage):
@@ -86,13 +92,15 @@ def run_actor(session, source, payload, token, budget, checkpoint, stage):
 
     dataset_url = f'{base}/datasets/{run["defaultDatasetId"]}/items'
     results = []
+    page_size = 25 if source == 'naver_blog' else 1000
+    fields = 'source,url,publishedAt,title,text,snippet,keyword,likeCount,viewCount' if source == 'naver_blog' else None
     while True:
         page = request_json(
             session, 'GET', dataset_url, stage, headers=headers,
-            params={'clean': 'true', 'limit': 1000, 'offset': len(results)},
+            params={'clean': 'true', 'limit': page_size, 'offset': len(results), 'fields': fields},
         )
         results.extend(page)
-        if len(page) < 1000:
+        if len(page) < page_size:
             details = dict(actor_id=run['actId'], run_id=run['id'], build_id=run.get('buildId'),
                            budget_usd=last_cap)
             checkpoint.put(stage, {'rows': results, 'details': details})

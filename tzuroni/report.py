@@ -2,8 +2,16 @@ from html import escape
 
 import pandas as pd
 
+from .charts import prediction_chart, sentiment_chart
 
-def render_report(ranking, metrics, backtest, start, end, mode):
+
+MODEL_LABELS = {
+    'zero_return': 'Flat price', 'price_only': 'Price only', 'price_and_social': 'Price + social',
+    'price_and_news': 'Price + news', 'price_and_text': 'Price + social + news',
+}
+
+
+def render_report(ranking, metrics, backtest, start, end, metadata, public=False):
     decimals = dict.fromkeys(['current_price', 'support', 'resistance', 'next_bar_price', 'next_bar_return_pct'], 2)
     display = ranking.round({**decimals, 'sentiment_score': 3}).copy()
     display['bar_end_utc'] = display['bar_end_utc'].dt.strftime('%Y-%m-%d %H:%M')
@@ -31,7 +39,10 @@ def render_report(ranking, metrics, backtest, start, end, mode):
             bars.append(f'<li><span>{escape(row["Ticker"])}</span>'
                         f'<meter min="0" max="{maximum}" value="{count}">{count}</meter>'
                         f'<span>{count}</span><span class="{tone}">{score} {tone}</span></li>')
-        table = rows.drop(columns=['exchange', 'Forum']).to_html(index=False, border=0, na_rep='—')
+        drop = ['exchange', 'Forum']
+        if public:
+            drop.extend(['Last close', 'Support', 'Resistance', 'Next-bar price'])
+        table = rows.drop(columns=drop).to_html(index=False, border=0, na_rep='—')
         forum = escape(rows['Forum'].iloc[0])
         two_sources = rows['Social sources (10 days)'].eq(2).sum()
         no_recent = rows['Social sources at forecast'].eq(0).sum()
@@ -40,7 +51,8 @@ def render_report(ranking, metrics, backtest, start, end, mode):
                         f'<ul aria-label="Social mention counts and sentiment">{"".join(bars)}</ul>'
                         f'<div class="scroll">{table}</div></section>')
 
-    metrics_table = metrics.assign(directional_accuracy_pct=metrics['directional_accuracy'] * 100)
+    metrics_table = metrics.assign(model=metrics['model'].replace(MODEL_LABELS),
+                                   directional_accuracy_pct=metrics['directional_accuracy'] * 100)
     metrics_table = metrics_table.drop(columns='directional_accuracy').round(2).rename(columns={
         'exchange': 'Exchange', 'model': 'Model', 'observations': 'Observations',
         'mae_bps': 'MAE (bps)', 'rmse_bps': 'RMSE (bps)',
@@ -57,8 +69,14 @@ def render_report(ranking, metrics, backtest, start, end, mode):
     })
     coverage_table = coverage.sort_index().rename_axis('Exchange').reset_index().to_html(index=False, border=0)
 
-    note = ('Synthetic demonstration. Prices and scores are generated for verification.' if mode == 'demo'
+    note = ('Synthetic demonstration. Prices and scores are generated for verification.' if metadata['mode'] == 'demo'
             else 'Live-source snapshot. Source coverage and the share of scored posts vary by asset.')
+    method = ('Multilingual MiniLM finance-prototype sentiment' if metadata.get('sentiment_model') == 'semantic'
+              else 'Multilingual finance lexicon sentiment')
+    source_detail = (' Korean forum features include date-bounded Naver Blog backfill.'
+                     if metadata.get('naver_backfill') else '')
+    scatter = prediction_chart(backtest)
+    sentiment_plot = sentiment_chart(ranking)
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Market sentiment and next-bar forecasts</title>
@@ -73,16 +91,21 @@ li {{ display: grid; grid-template-columns: 5.4em minmax(3em, 1fr) 2.9em 7.7em; 
 meter {{ width: 100%; accent-color: #287c89; }}
 .bullish {{ color: #166b46; }} .bearish {{ color: #a12932; }} .unscored {{ color: #546376; }}
 .scroll {{ overflow: auto; }} table {{ border-collapse: collapse; width: 100%; font-size: .86rem; }}
+.chart {{ display: block; width: 100%; height: auto; max-width: 1150px; margin: 10px auto; }}
 th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #e6ecf0; white-space: nowrap; }}
 th {{ background: #eaf1f7; }}
 </style></head>
 <body><main><header><h1>Market sentiment and next-bar forecasts</h1>
 <p>{note}</p><p>Window (UTC) {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}</p>
-<p>Position counts reflect explicit first-person disclosures in matched social posts.</p></header>
+<p>{method}.{source_detail} Position counts reflect explicit first-person disclosures in matched social posts.</p></header>
 {''.join(sections)}
+<section><h2>Social sentiment by stock</h2>{sentiment_plot}</section>
 <section><h2>Walk-forward validation</h2>
-<p>Three chronological folds compare next-bar log returns from the price-only model, the model with text, and a flat-price forecast. Positive MAE improvement means lower error than the corresponding baseline.</p>
+<p>Three chronological folds compare the flat forecast and the price-only, price plus social, price plus news, and combined models. Each text model retains the same price features.</p>
 <div class="scroll">{metrics_table}</div>
+<h3>Actual versus predicted returns</h3>
+<p>For each held-out row, the horizontal axis shows the observed return and the vertical axis shows the combined model prediction.</p>
+{scatter}
 <h3>Source coverage in the holdout</h3>
 <p>Each count is the number of held-out rows with a matched item from the source in the 24 hours before that bar closed.</p>
 <div class="scroll">{coverage_table}</div></section></main></body></html>'''

@@ -7,14 +7,18 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
+from requests.exceptions import ChunkedEncodingError
 
 from tzuroni.assets import ASSETS
 from tzuroni.checkpoint import LiveCheckpoint, open_live_checkpoint
 from tzuroni.demo import make_demo
 from tzuroni.model import build_panel, evaluate, summarize
+from tzuroni.naver_backfill import normalize_blog_post
 from tzuroni.news import search_news
 from tzuroni.positions import disclosed_positions
-from tzuroni.providers import POST_COLUMNS, collect_live_posts, post_record, run_actor, select_lihkg_threads
+from tzuroni.providers import (
+    POST_COLUMNS, ProviderError, collect_live_posts, post_record, request_json, run_actor, select_lihkg_threads,
+)
 
 
 class ForecastTimingTests(unittest.TestCase):
@@ -41,7 +45,8 @@ class ForecastTimingTests(unittest.TestCase):
         panel, _ = build_panel(self.prices, self.posts, self.start, self.end)
         latest, backtest, metrics = evaluate(panel)
         self.assertEqual(len(latest), 10)
-        self.assertEqual(len(metrics), 9)
+        self.assertEqual(len(metrics), 15)
+        self.assertTrue({'price_and_social_close', 'price_and_news_close'}.issubset(backtest.columns))
         price_baseline = metrics.loc[metrics['model'].eq('price_only'), 'mae_improvement_vs_price_only_pct']
         np.testing.assert_allclose(price_baseline, 0)
         for _, fold in backtest.groupby('fold'):
@@ -80,6 +85,34 @@ class PositionDisclosureTests(unittest.TestCase):
 
 
 class ProviderMappingTests(unittest.TestCase):
+    def test_truncated_dataset_download_retries_without_reposting_an_actor_run(self):
+        session = Mock()
+        response = Mock()
+        response.json.return_value = [{'id': 1}]
+        session.request.side_effect = [ChunkedEncodingError(), response]
+        self.assertEqual(request_json(session, 'GET', 'https://example.com/data', 'test'), [{'id': 1}])
+        self.assertEqual(session.request.call_count, 2)
+        session.reset_mock()
+        session.request.side_effect = [ChunkedEncodingError(), response]
+        with self.assertRaises(ProviderError):
+            request_json(session, 'POST', 'https://example.com/run', 'test')
+        session.request.assert_called_once()
+
+    def test_naver_blog_requires_an_exact_time_and_financial_asset_context(self):
+        asset = ASSETS[5]
+        term = f'{asset.aliases[0]} 주가'
+        assets = {term: asset}
+        row = dict(source='blog', url='https://blog.naver.com/public_example/123', keyword=term,
+                   publishedAt='2026-11-22T10:30:00+09:00', title='Market roundup',
+                   text='삼성전자 실적과 주가를 분석했다.')
+        post = normalize_blog_post(row, assets)
+        self.assertEqual(post['source'], 'naver')
+        self.assertEqual(post['source_detail'], 'naver_blog')
+        self.assertEqual(post['published_at'], pd.Timestamp('2026-11-22T01:30Z'))
+        self.assertIsNone(normalize_blog_post({**row, 'publishedAt': '2026-11-22T00:00:00+09:00'}, assets))
+        self.assertIsNone(normalize_blog_post({**row, 'text': '삼성전자 스마트폰을 사용했다.'}, assets))
+        self.assertIsNone(normalize_blog_post({**row, 'source': 'cafe'}, assets))
+
     def test_lihkg_search_term_can_select_a_thread_but_cannot_count_it(self):
         asset = ASSETS[2]
         end = pd.Timestamp('2026-11-27T10:45Z')
