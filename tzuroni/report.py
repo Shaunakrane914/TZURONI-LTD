@@ -16,6 +16,7 @@ def render_report(ranking, metrics, start, end, mode):
         'news_mentions': 'News', 'sentiment_score': 'Sentiment', 'sentiment_direction': 'Sentiment direction',
         'sentiment_rank': 'Sentiment rank',
         'support': 'Support', 'resistance': 'Resistance', 'next_bar_price': 'Next-bar price',
+        'long_position_posts': 'Long disclosures', 'short_position_posts': 'Short disclosures',
         'next_bar_return_pct': 'Forecast change (%)',
     })
     sections = []
@@ -44,6 +45,7 @@ def render_report(ranking, metrics, start, end, mode):
         'exchange': 'Exchange', 'model': 'Model', 'observations': 'Observations',
         'mae_bps': 'MAE (bps)', 'rmse_bps': 'RMSE (bps)',
         'mae_improvement_vs_flat_pct': 'MAE improvement vs flat (%)',
+        'mae_improvement_vs_price_only_pct': 'MAE improvement vs price-only (%)',
         'directional_accuracy_pct': 'Directional accuracy (%)',
     }).to_html(index=False, border=0, na_rep='—')
 
@@ -67,8 +69,9 @@ th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #e6ecf0; whit
 th {{ background: #eaf1f7; }}
 </style></head>
 <body><main><header><h1>Market sentiment and next-bar forecasts</h1>
-<p>{note}</p><p>Window (UTC) {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}</p></header>
+<p>{note}</p><p>Window (UTC) {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}</p>
+<p>Position counts reflect explicit first-person disclosures in matched social posts.</p></header>
 {''.join(sections)}
 <section><h2>Walk-forward validation</h2>
-<p>Three chronological folds compare next-bar log returns from the price-only model, the model with text, and a flat-price forecast. Positive MAE improvement means lower error than the flat forecast.</p>
+<p>Three chronological folds compare next-bar log returns from the price-only model, the model with text, and a flat-price forecast. Positive MAE improvement means lower error than the corresponding baseline.</p>
 <div class="scroll">{metrics_table}</div></section></main></body></html>'''

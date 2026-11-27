@@ -13,7 +13,8 @@ from tzuroni.checkpoint import LiveCheckpoint, open_live_checkpoint
 from tzuroni.demo import make_demo
 from tzuroni.model import build_panel, evaluate, summarize
 from tzuroni.news import search_news
-from tzuroni.providers import POST_COLUMNS, collect_live_posts, run_actor
+from tzuroni.positions import disclosed_positions
+from tzuroni.providers import POST_COLUMNS, collect_live_posts, post_record, run_actor, select_lihkg_threads
 
 
 class ForecastTimingTests(unittest.TestCase):
@@ -41,6 +42,8 @@ class ForecastTimingTests(unittest.TestCase):
         latest, backtest, metrics = evaluate(panel)
         self.assertEqual(len(latest), 10)
         self.assertEqual(len(metrics), 9)
+        price_baseline = metrics.loc[metrics['model'].eq('price_only'), 'mae_improvement_vs_price_only_pct']
+        np.testing.assert_allclose(price_baseline, 0)
         for _, fold in backtest.groupby('fold'):
             self.assertLess(fold['trained_through'].max(), fold['bar_end'].min())
             self.assertTrue(fold['target_at'].gt(fold['bar_end']).all())
@@ -54,9 +57,40 @@ class ForecastTimingTests(unittest.TestCase):
         self.assertTrue(ranking['social_sources'].eq(1).all())
         self.assertTrue(ranking['social_sources_at_bar'].le(1).all())
         self.assertTrue(ranking['sentiment_rank'].between(1, 5).all())
+        self.assertTrue(ranking['long_position_posts'].eq(0).all())
+
+
+class PositionDisclosureTests(unittest.TestCase):
+    def test_matches_explicit_asset_specific_positions(self):
+        tencent, byd, samsung = ASSETS[0], ASSETS[4], ASSETS[5]
+        text = "I'm still long 0700.HK. I am short BYD."
+        self.assertEqual(disclosed_positions(text, tencent), {'long'})
+        self.assertEqual(disclosed_positions(text, byd), {'short'})
+        self.assertEqual(disclosed_positions('我目前持有騰訊空倉', tencent), {'short'})
+        self.assertEqual(disclosed_positions('저는 삼성전자 주식을 보유 중입니다.', samsung), {'long'})
+
+    def test_skips_opinions_negation_and_ambiguous_assets(self):
+        asset = ASSETS[0]
+        for text in (
+            'Tencent looks bullish.', 'I am not short Tencent.', 'If I am long Tencent, I would sell.',
+            'Tencent and BYD look good. I am long.', 'Tencent: I am short of cash.',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(disclosed_positions(text, asset), set())
 
 
 class ProviderMappingTests(unittest.TestCase):
+    def test_lihkg_search_term_can_select_a_thread_but_cannot_count_it(self):
+        asset = ASSETS[2]
+        end = pd.Timestamp('2026-11-27T10:45Z')
+        start = end - timedelta(days=10)
+        row = dict(thread_id='a', source_query=asset.aliases[0], title='Delivery sector roundup',
+                   created_at='2026-11-26T03:00:00Z')
+        self.assertEqual(select_lihkg_threads([row], [asset], start, end), ['a'])
+        self.assertIsNone(post_record(asset, 'lihkg', row))
+        row['own_text'] = f'{asset.aliases[0]} reported earnings.'
+        self.assertIsNotNone(post_record(asset, 'lihkg', row))
+
     def test_normalizes_and_deduplicates_provider_records(self):
         when = '2026-11-26T12:00:00+09:00'
         actor_rows = [

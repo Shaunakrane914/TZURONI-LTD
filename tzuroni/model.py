@@ -10,6 +10,7 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from .assets import ASSETS, SOURCES
+from .positions import disclosed_positions
 
 
 POSITIVE = ('bullish', 'upgrade', 'upgraded', 'outperform', 'beat estimates', 'rally',
@@ -115,9 +116,10 @@ def evaluate(panel):
     metrics = []
     for market in ('All', *SOURCES):
         rows = scores if market == 'All' else scores.loc[scores['exchange'].eq(market)]
-        flat_mae = np.abs(rows['target_return']).mean() * 10_000
+        actual = rows['target_return'].to_numpy()
+        flat_mae = np.abs(actual * 10_000).mean()
+        price_mae = np.abs((rows['price_only'].to_numpy() - actual) * 10_000).mean()
         for model in BENCHMARKS:
-            actual = rows['target_return'].to_numpy()
             predicted = rows[model].to_numpy()
             error = (predicted - actual) * 10_000
             mae = np.abs(error).mean()
@@ -125,6 +127,7 @@ def evaluate(panel):
                 exchange=market, model=model, observations=len(rows),
                 mae_bps=mae, rmse_bps=np.sqrt(np.mean(error ** 2)),
                 mae_improvement_vs_flat_pct=100 * (1 - mae / flat_mae) if flat_mae > 0 else np.nan,
+                mae_improvement_vs_price_only_pct=100 * (1 - mae / price_mae) if price_mae > 0 else np.nan,
                 directional_accuracy=np.mean(np.sign(actual) == np.sign(predicted)),
             ))
 
@@ -147,6 +150,7 @@ def summarize(latest, scored):
         social = posts.loc[posts['source'].isin((forum, telegram))]
         at_bar = social.loc[social['published_at'].le(forecast['bar_end'])
                             & social['published_at'].gt(forecast['bar_end'] - LOOKBACK)]
+        disclosures = social['text'].map(lambda text: disclosed_positions(text, asset))
         score = social.groupby('source')['score'].mean().mean()
         direction = 'unscored' if pd.isna(score) else 'bullish' if score > 0.05 else 'bearish' if score < -0.05 else 'neutral'
         rows.append(dict(
@@ -158,6 +162,8 @@ def summarize(latest, scored):
             telegram_mentions=int(posts['source'].eq(telegram).sum()),
             news_mentions=int(posts['source'].eq('exa').sum()), sentiment_score=score,
             sentiment_direction=direction, support=forecast['support'], resistance=forecast['resistance'],
+            long_position_posts=int(disclosures.map(lambda positions: 'long' in positions).sum()),
+            short_position_posts=int(disclosures.map(lambda positions: 'short' in positions).sum()),
             next_bar_price=forecast['forecast_price'], next_bar_return_pct=100 * np.expm1(forecast['forecast_return']),
         ))
     ranking = pd.DataFrame(rows)
